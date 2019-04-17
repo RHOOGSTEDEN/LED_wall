@@ -1,4 +1,5 @@
-/*  OctoWS2811 movie2serial.pde - Transmit video data to 1 or more
+/*  Much of the serial data transfer code is modified from the
+    OctoWS2811 movie2serial.pde - Transmit video data to 1 or more
       Teensy 3.0 boards running OctoWS2811 VideoDisplay.ino
     http://www.pjrc.com/teensy/td_libs_OctoWS2811.html
     Copyright (c) 2018 Paul Stoffregen, PJRC.COM, LLC
@@ -26,13 +27,31 @@ import processing.serial.*;
 import java.awt.Rectangle;
 import SimpleOpenNI.*;
 import cc.arduino.*;
+import processing.sound.*;
+
+// Declare the processing sound variables 
+AudioIn sample;
+Amplitude rms;
+
+// Declare a scaling factor
+float scale = 5.0;
+
+// Declare a smooth factor
+float smoothFactor = 0.25;
+
+// Used for smoothing
+float sum;
 
 Arduino arduino;
 
-boolean kinectOn = false;
+boolean kinectOn = true;
 boolean playMovie = false;
 boolean LEDconnected = true;
-int brightness = 50;
+boolean servoTrackOn = false;
+boolean particleShower = true;
+boolean bouncingBalls = true;
+boolean soundEffects = true;
+int brightness = 200;
 
 SimpleOpenNI  kinect;      
 int [] userMap;
@@ -51,24 +70,34 @@ PImage[] ledImage = new PImage[maxPorts];      // image sent to each port
 int[] gammatable = new int[256];
 int errorCount=0;
 float framerate=0;
-
+float radius=75;
 //Vectors used to calculate the center of the mass of a user
 PVector com = new PVector();
 PVector com2d = new PVector();
-
+ParticleSystem[] ps = new ParticleSystem[3];
 int deg = 90;
+ArrayList<Ball> balls = new ArrayList<Ball>();
 
 void settings() {
   //The kinect camera has a 640x480 resolution
-  size(640, 480);  // create the window
+  size(1200, 800);  // create the window
 }
 
 void setup() {
   //The kinect has a framerate of 30 fps 
   frameRate(30);
   delay(20);
+  for (int i = 0; i<3; i++){
+    ps[i] = new ParticleSystem(new PVector(200+i*400, 24));
+  }
+  for(int i = 0; i<25; i++) {
+    balls.add( new Ball(random(radius,width-radius), random(radius, height-radius), radius));
+  }
   if(kinectOn){
+    if(servoTrackOn){
     arduino = new Arduino(this, "/dev/cu.usbmodem14601", 57600);
+    arduino.pinMode(7, Arduino.SERVO);
+    }
     kinect = new SimpleOpenNI(this);
     if(kinect.isInit() == false) {
          println("Can't init SimpleOpenNI, maybe the camera is not connected!"); 
@@ -78,17 +107,17 @@ void setup() {
     kinect.enableDepth();
    
     // enable RGB camera
-    kinect.enableRGB(); 
+    //kinect.enableRGB(); 
    
     // enable skeleton generation for all joints
     kinect.enableUser();
    
     // turn on depth-color alignment 
-    kinect.alternativeViewPointDepthToImage();
+   // kinect.alternativeViewPointDepthToImage();
     
     //TO-DO: find out why this function doesn't translate the image
-    kinect.setMirror(true);
-    arduino.pinMode(7, Arduino.SERVO);
+   // kinect.setMirror(true);
+    
   }
   background(0);
   if (LEDconnected){
@@ -105,21 +134,69 @@ void setup() {
     myMovie.loop();  // start the movie :-)
   }
   
+  if(soundEffects){
+  //Load and play a soundfile and loop it
+  sample = new AudioIn(this, 0);
+  sample.start();
+
+  // Create and patch the rms tracker
+  rms = new Amplitude(this);
+  rms.input(sample);
+  }
 }
 
 void draw() {
-  frameRate(30);
+  if(soundEffects){
+   // Smooth the rms data by smoothing factor
+  sum += (rms.analyze() - sum) * smoothFactor;  
+
+  // rms.analyze() return a value between 0 and 1. It's
+  // scaled to height/2 and then multiplied by a scale factor
+  radius = 20 +sum * (radius) * scale;
+  //ellipse(width/2, height/2, radius, radius);
+  //delay(200);
+  }
+  
   background(0);
   if(playMovie){
-  image(myMovie, 0, 0, width, height);
+    image(myMovie, 0, 0, width, height);
   }
+  if(particleShower){
+    for(ParticleSystem system : ps){
+    system.addParticle();
+    system.run();
+    }
+  }
+  if(bouncingBalls){
+    for (Ball b : balls) {
+    b.update(radius);
+    b.display();
+    b.checkBoundaryCollision();
+   
+  }
+   //for(int i = 0; i <balls.size(); i++){
+   //   for(Ball ball : balls){
+   //     if(ball != balls.get(i)){
+   //       balls.get(i).checkCollision(ball);
+   //     }
+   //   }
+   // }
+  //balls[0].checkCollision(balls[1]);
+  }
+  
+  loadPixels();
+  PImage img = createImage(width, height, RGB);
+  img.loadPixels();
+  img.pixels = pixels;
+  img.updatePixels();
+  img.resize(640,480);
   if(kinectOn){
     //pull the latest data
     kinect.update();
     
     float centerOfMassX=0;
     IntVector userList = new IntVector();
-    
+    if(servoTrackOn){
    //populate userList with all users being tracked
     kinect.getUsers(userList);
     if (userList.size() > 0) {
@@ -152,42 +229,60 @@ void draw() {
         i++;
       }     
     }
+    }
     
     // get the Kinect depth image
     PImage depthImage = kinect.depthImage(); 
-    
+     
     // load the depth pixels in array
     depthImage.loadPixels();
-   
+    
+    img.loadPixels();
    
     int[] userImageList = kinect.getUsers();
     if(userImageList.length > 0) {
       userMap = kinect.userMap();
-      // load sketches pixels
-      loadPixels();
+      
      for(int i=0; i<userMap.length; i++)
       {
         if(userMap[i]!=0)
         {
            // set the sketch pixel to the color pixel
-            pixels[i] = color(0,0,255);//depthImage.pixels[i];
+            img.pixels[i] =depthImage.pixels[i];
         }
-        else
-        {
-          pixels[i] = color(0);
-        }
+        //else
+        //{
+        //  img.pixels[i] = color(0);
+        //}
       }
-     updatePixels();
+     img.updatePixels();
+     //for(Ball b: balls){
+     //  b.checkUserCollision(userMap);
+     //}
     } 
+    
   }
-  loadPixels();
-  PImage img = createImage(height, width, RGB);
+  image(img,0,0,width, height);
+  //img.loadPixels();
+  //for (int i =img.width*img.height/2;i< img.width*img.height; i++){
+  //  img.pixels[i] = reduceBrightness(img.pixels[i]);
+  //}
+  //img.updatePixels();
+  img.resize(width,height);
   img.loadPixels();
+  //loadPixels();
+  //pixels = img.pixels;
+  //updatePixels();
+  
+  //img.loadPixels();
+  //loadPixels();
+  //PImage img = createImage(width, height, RGB);
+  //img.loadPixels();
 
     
-  img.pixels = pixels; 
+  //img.pixels = img.pixels; 
 
-  img.updatePixels();
+  //img.updatePixels();
   if (LEDconnected){
   for (int i=0; i < numPorts; i++) {
     // copy a portion of the image to the LED image
@@ -215,12 +310,12 @@ void draw() {
   }
   }
 }
-void movieEvent(Movie m) {
-  // read the movie's next frame
-  framerate=30;
-  m.read();
-  ;
-}
+//void movieEvent(Movie m) {
+//  // read the movie's next frame
+//  framerate=30;
+//  m.read();
+//  ;
+//}
 
 // image2data converts an image to OctoWS2811's raw data format.
 // The number of vertical pixels in the image must be a multiple
@@ -268,13 +363,28 @@ int colorWiring(int c) {
   int green = int(((c & 0x00FF00) >> 8));
   int blue = int((c & 0x0000FF));
   red = (red * brightness) >> 8;
-  green = (green * brightness) >> 8;
+  green = ((green * brightness) >> 8);
   blue = (blue * brightness) >> 8;
   
   red = gammatable[int(red)];
   green = gammatable[green];
   blue = gammatable[blue];
   return (green << 16) | (red << 8) | (blue); // GRB - most common wiring
+}
+
+int tintColor(int c) {
+  int b=256;
+  int red = int(((c & 0xFF0000) >> 16));
+  int green = int(((c & 0x00FF00) >> 8));
+  int blue = int((c & 0x0000FF))+15;
+  red = (red * b) >> 8;
+  green = (green * b) >> 8;
+  blue = (blue * b) >> 8;
+  
+  //red = gammatable[int(red)];
+  //green = gammatable[green];
+  //blue = gammatable[blue];
+  return (red << 16) | (green << 8) | (blue);
 }
 
 // ask a Teensy board for its LED configuration, and set up the info for it.
