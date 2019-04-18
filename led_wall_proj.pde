@@ -34,7 +34,7 @@ AudioIn sample;
 Amplitude rms;
 
 // Declare a scaling factor
-float scale = 5.0;
+float scale = 7.50;
 
 // Declare a smooth factor
 float smoothFactor = 0.25;
@@ -46,7 +46,7 @@ Arduino arduino;
 
 boolean kinectOn = true;
 boolean playMovie = false;
-boolean LEDconnected = true;
+boolean LEDconnected = false;
 boolean servoTrackOn = false;
 boolean particleShower = true;
 boolean bouncingBalls = true;
@@ -70,14 +70,14 @@ PImage[] ledImage = new PImage[maxPorts];      // image sent to each port
 int[] gammatable = new int[256];
 int errorCount=0;
 float framerate=0;
-float radius=75;
+float radius=25;
 //Vectors used to calculate the center of the mass of a user
 PVector com = new PVector();
 PVector com2d = new PVector();
 ParticleSystem[] ps = new ParticleSystem[3];
 int deg = 90;
 ArrayList<Ball> balls = new ArrayList<Ball>();
-
+int ballNumber = 10;
 void settings() {
   //The kinect camera has a 640x480 resolution
   size(1200, 800);  // create the window
@@ -88,9 +88,9 @@ void setup() {
   frameRate(30);
   delay(20);
   for (int i = 0; i<3; i++){
-    ps[i] = new ParticleSystem(new PVector(200+i*400, 24));
+    ps[i] = new ParticleSystem(new PVector(200+i*400, -24));
   }
-  for(int i = 0; i<25; i++) {
+  for(int i = 0; i<ballNumber; i++) {
     balls.add( new Ball(random(radius,width-radius), random(radius, height-radius), radius));
   }
   if(kinectOn){
@@ -152,7 +152,7 @@ void draw() {
 
   // rms.analyze() return a value between 0 and 1. It's
   // scaled to height/2 and then multiplied by a scale factor
-  radius = 20 +sum * (radius) * scale;
+  radius = 25 +sum * (radius) * scale;
   //ellipse(width/2, height/2, radius, radius);
   //delay(200);
   }
