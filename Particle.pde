@@ -1,14 +1,16 @@
 // A simple Particle class
 
-class Particle {
+class Particle_dot {
   PVector position;
   PVector velocity;
   PVector acceleration;
   float lifespan;
-
-  Particle(PVector l) {
+  float r = 255;
+  float g = 255; 
+  float b = 255;
+  Particle_dot(PVector l) {
     acceleration = new PVector(0, 0.05);
-    velocity = new PVector(random(-1, 1), random(-2, 0));
+    velocity = new PVector(random(-10,10), random(-2, 0));
     position = l.copy();
     lifespan = 255.0;
   }
@@ -22,13 +24,15 @@ class Particle {
   void update() {
     velocity.add(acceleration);
     position.add(velocity);
-    lifespan -= 1.0;
+    lifespan -= 1.2;
+    g -= 1.0;
+    
   }
 
   // Method to display
   void display() {
     stroke(255, lifespan);
-    fill(255, lifespan);
+    fill(r, g, b, lifespan);
     ellipse(position.x, position.y, 16, 16);
   }
 

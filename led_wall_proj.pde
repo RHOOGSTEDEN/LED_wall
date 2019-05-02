@@ -27,39 +27,51 @@ import processing.serial.*;
 import java.awt.Rectangle;
 import SimpleOpenNI.*;
 import cc.arduino.*;
-import processing.sound.*;
+//import processing.sound.*;
 
 // Declare the processing sound variables 
-AudioIn sample;
-Amplitude rms;
+//AudioIn sample;
+//Amplitude rms;
+boolean audioOn  = true;   // start with audio reaction on?
+boolean aBackOn  = true;  // start with audio background on?
 
+int MAX_BRIGHTNESS = 255;  // starting brightness of the wall
+float xoff = 0.0, yoff = 0.0, zoff = 0.0;              // used for perlin noise
 // Declare a scaling factor
 float scale = 7.50;
 
 // Declare a smooth factor
-float smoothFactor = 0.25;
+float smoothFactor = 0.5;
 
 // Used for smoothing
 float sum;
-
+float noiseInc = 0.2;
 Arduino arduino;
 
+//boolean switches for testing and protyping
 boolean kinectOn = true;
 boolean playMovie = false;
-boolean LEDconnected = false;
-boolean servoTrackOn = false;
-boolean particleShower = true;
-boolean bouncingBalls = true;
+boolean LEDconnected = true;
+boolean servoTrackOn = true;
+
 boolean soundEffects = true;
-int brightness = 200;
+int brightness = 128;
 
 SimpleOpenNI  kinect;      
 int [] userMap;
+PImage transparent;  // a transparent image used to reset the user images  
+final int KINECT_WIDTH  = 640;  // the x size of the kinect's depth image
+final int KINECT_HEIGHT = 480;  // the y size of the kinect's depth image 
 
 Movie myMovie;
+float centerOfMassX=width/2;
+float centerOfMassY=height/2;
+//sweet spot for gamma correction
+float gamma = 2.1;
 
-float gamma = 1.7;
-
+///////////////////////////////////////////////////////////////////////////////////
+//TODO: Edit this block out as there is only one Teensy needed for our LED display
+///////////////////////////////////////////////////////////////////////////////////
 int numPorts=0;  // the number of serial ports in use
 int maxPorts=24; // maximum number of serial ports
 
@@ -67,38 +79,73 @@ Serial[] ledSerial = new Serial[maxPorts];     // each port's actual Serial port
 Rectangle[] ledArea = new Rectangle[maxPorts]; // the area of the movie each port gets, in % (0-100)
 boolean[] ledLayout = new boolean[maxPorts];   // layout of rows, true = even is left->right
 PImage[] ledImage = new PImage[maxPorts];      // image sent to each port
+//////////////////////////////////////////////////////////////////////////////////
 int[] gammatable = new int[256];
 int errorCount=0;
 float framerate=0;
-float radius=25;
+
+
 //Vectors used to calculate the center of the mass of a user
 PVector com = new PVector();
 PVector com2d = new PVector();
-ParticleSystem[] ps = new ParticleSystem[3];
+//servo starting position
 int deg = 90;
+
+ParticleSystem[] ps = new ParticleSystem[1];
+
+
+// radius for balls
+float radius=25;
 ArrayList<Ball> balls = new ArrayList<Ball>();
 int ballNumber = 10;
-void settings() {
-  //The kinect camera has a 640x480 resolution
-  size(1200, 800);  // create the window
-}
 
+/////////////////////////////////////////////////////////////
+// Background Modes
+/////////////////////////////////////////////////////////////
+int PARTICLE_SHOWER = 1;
+int BALLS = 2;
+int CHESS_GRID = 3;
+int PULSAR = 4;
+int SPIN = 5;
+int PLAY_MOVIE = 6;
+/////////////////////////////////////////////////////////////
+int mode = 1;
 void setup() {
+  size(1200, 800, P3D); 
+  setupMinim();
+  setupPulsar();
+  setupSpin();
+  setupGrid();
   //The kinect has a framerate of 30 fps 
-  frameRate(30);
+  //frameRate(30);
   delay(20);
-  for (int i = 0; i<3; i++){
-    ps[i] = new ParticleSystem(new PVector(200+i*400, -24));
-  }
-  for(int i = 0; i<ballNumber; i++) {
-    balls.add( new Ball(random(radius,width-radius), random(radius, height-radius), radius));
-  }
+  setupColors();
+  //if(particleShower) {
+    for (int i = 0; i<1; i++){
+      ps[i] = new ParticleSystem(new PVector(width/2, -24));
+    }
+  //}
+  
+  //if (bouncingBalls) {
+    for(int i = 0; i<ballNumber; i++) {
+      balls.add( new Ball(random(radius,width-radius), random(radius, height-radius), radius));
+    }
+  //}
+  
   if(kinectOn){
+    transparent = createImage(KINECT_WIDTH, KINECT_HEIGHT, ARGB); // create the transparent image
+    transparent.loadPixels();                                     // load it's pixels
+    for (int i = 0; i < transparent.pixels.length; i++) {         // loop through the image pixels
+      transparent.pixels[i] = color(0, 0, 0, 0);                  // and set them all to transparent
+    }
+    transparent.updatePixels();  
+    
     if(servoTrackOn){
-    arduino = new Arduino(this, "/dev/cu.usbmodem14601", 57600);
+    arduino = new Arduino(this, "/dev/cu.usbmodem14501", 57600);
     arduino.pinMode(7, Arduino.SERVO);
     }
     kinect = new SimpleOpenNI(this);
+    kinect.update();
     if(kinect.isInit() == false) {
          println("Can't init SimpleOpenNI, maybe the camera is not connected!"); 
          exit();
@@ -107,7 +154,7 @@ void setup() {
     kinect.enableDepth();
    
     // enable RGB camera
-    //kinect.enableRGB(); 
+   // kinect.enableRGB(); 
    
     // enable skeleton generation for all joints
     kinect.enableUser();
@@ -116,7 +163,7 @@ void setup() {
    // kinect.alternativeViewPointDepthToImage();
     
     //TO-DO: find out why this function doesn't translate the image
-   // kinect.setMirror(true);
+   kinect.setMirror(true);
     
   }
   background(0);
@@ -124,66 +171,47 @@ void setup() {
   serialConfigure("/dev/tty.usbmodem55473401");  
   }
   if (errorCount > 0) exit();
+  
+  //referencing a table is faster than constantly calculating the value
   for (int i=0; i < 256; i++) {
     gammatable[i] = (int)(pow((float)i / 255.0, gamma) * 255.0 + 0.5);
   }
   
-  if(playMovie) {
+  //if(playMovie) {
     //can be changed to any video in the data folder
-    myMovie = new Movie(this, "cat.mp4");
+    myMovie = new Movie(this, "lips.mp4");
     myMovie.loop();  // start the movie :-)
-  }
+  //}
   
-  if(soundEffects){
-  //Load and play a soundfile and loop it
-  sample = new AudioIn(this, 0);
-  sample.start();
+  //if(soundEffects){
+  ////Load and play a soundfile and loop it
+  //sample = new AudioIn(this, 0);
+  //sample.start();
 
-  // Create and patch the rms tracker
-  rms = new Amplitude(this);
-  rms.input(sample);
-  }
+  //// Create and patch the rms tracker
+  //rms = new Amplitude(this);
+  //rms.input(sample);
+  //}
 }
 
 void draw() {
-  if(soundEffects){
-   // Smooth the rms data by smoothing factor
-  sum += (rms.analyze() - sum) * smoothFactor;  
-
-  // rms.analyze() return a value between 0 and 1. It's
-  // scaled to height/2 and then multiplied by a scale factor
-  radius = 25 +sum * (radius) * scale;
-  //ellipse(width/2, height/2, radius, radius);
-  //delay(200);
-  }
-  
-  background(0);
-  if(playMovie){
-    image(myMovie, 0, 0, width, height);
-  }
-  if(particleShower){
-    for(ParticleSystem system : ps){
-    system.addParticle();
-    system.run();
+  if (mousePressed == true) {
+    if (mouseButton == LEFT) {
+      mode -=1;
+      mode = constrain(mode, 1, 6);
+    } else if (mouseButton == RIGHT) { 
+       mode +=1;
+      mode = constrain(mode, 1, 6);
     }
   }
-  if(bouncingBalls){
-    for (Ball b : balls) {
-    b.update(radius);
-    b.display();
-    b.checkBoundaryCollision();
-   
-  }
-   //for(int i = 0; i <balls.size(); i++){
-   //   for(Ball ball : balls){
-   //     if(ball != balls.get(i)){
-   //       balls.get(i).checkCollision(ball);
-   //     }
-   //   }
-   // }
-  //balls[0].checkCollision(balls[1]);
-  }
+   updateNoise(); // update noise offsets
+  colors.update();
+  background(colors.background);
+  colors.updateUsers();
+ 
+  radius = 25 + radius *map(audio.volume.value, 0, 100, 0, 10);
   
+  doMode(mode);
   loadPixels();
   PImage img = createImage(width, height, RGB);
   img.loadPixels();
@@ -194,46 +222,49 @@ void draw() {
     //pull the latest data
     kinect.update();
     
-    float centerOfMassX=0;
+    
     IntVector userList = new IntVector();
     if(servoTrackOn){
-   //populate userList with all users being tracked
-    kinect.getUsers(userList);
-    if (userList.size() > 0) {
-      int userId = userList.get(0);
-      int i = 0;
-      
-      //check to see if any of the users have their skeletons being tracked, if so find center of mass
-      while(i<userList.size()){
-        userId = userList.get(i);
-        if (kinect.isTrackingSkeleton(userId)) {     
-          if (kinect.getCoM(userId,com)) {
-            kinect.convertRealWorldToProjective(com,com2d);
-            centerOfMassX = com2d.x;
-            //println(centerOfMassX);
-            // If the center of mass is not centered in the frame, rotate servo to pan kinect
-            if(centerOfMassX < width/2 - 30) {
-              deg += 1;
-              deg = constrain(deg, 0, 180);
-              arduino.servoWrite(7, deg);
+      //populate userList with all users being tracked
+      kinect.getUsers(userList);
+      if (userList.size() > 0) {
+        int userId = userList.get(0);
+        int i = 0;
+        
+        //check to see if any of the users have their skeletons being tracked, if so find center of mass
+        while(i<userList.size()){
+          userId = userList.get(i);
+          if (kinect.isTrackingSkeleton(userId)) {     
+            if (kinect.getCoM(userId,com)) {
+              kinect.convertRealWorldToProjective(com,com2d);
+              centerOfMassX = com2d.x;
+              centerOfMassY = com2d.y;
+              //println(centerOfMassX);
+              // If the center of mass is not centered in the frame, rotate servo to pan kinect
+              if(centerOfMassX < img.width/2 - 10) {
+                deg += 1;
+                deg = constrain(deg, 10, 170);
+                arduino.servoWrite(7, deg);
+                //delay(10);
+              }
+              if(centerOfMassX > img.width/2 + 10) {
+                deg -= 1;
+                deg = constrain(deg, 10, 170);
+                arduino.servoWrite(7, deg);
+                //delay(10);
+              }
+              //println(deg);
+              
             }
-            if(centerOfMassX > width/2 + 30) {
-              deg -= 1;
-              deg = constrain(deg, 0, 180);
-              arduino.servoWrite(7, deg);
-            }
-            //println(deg);
-            
           }
-        }
-        i++;
-      }     
-    }
+          i++;
+        }     
+      }
     }
     
     // get the Kinect depth image
     PImage depthImage = kinect.depthImage(); 
-     
+    
     // load the depth pixels in array
     depthImage.loadPixels();
     
@@ -247,8 +278,10 @@ void draw() {
       {
         if(userMap[i]!=0)
         {
+         img.pixels[i] = color(colors.users[userMap[i]%12]);
+     
            // set the sketch pixel to the color pixel
-            img.pixels[i] =depthImage.pixels[i];
+            //img.pixels[i] =depthImage.pixels[i];
         }
         //else
         //{
@@ -256,9 +289,7 @@ void draw() {
         //}
       }
      img.updatePixels();
-     //for(Ball b: balls){
-     //  b.checkUserCollision(userMap);
-     //}
+     
     } 
     
   }
@@ -310,13 +341,43 @@ void draw() {
   }
   }
 }
-//void movieEvent(Movie m) {
-//  // read the movie's next frame
-//  framerate=30;
-//  m.read();
-//  ;
-//}
-
+void movieEvent(Movie m) {
+  // read the movie's next frame
+  framerate=30;
+  m.read();
+  ;
+}
+void doMode(int i){
+  if(playMovie){
+    
+  }
+  if(i ==PARTICLE_SHOWER){
+    for(ParticleSystem system : ps){
+    system.addParticle();
+    system.run();
+    }
+  }
+  if(i == BALLS){
+    for (Ball b : balls) {
+    b.update(radius);
+    b.display();
+    b.checkBoundaryCollision();
+   
+  }
+   for(int j = 0; j <balls.size(); j++){
+      for(Ball ball : balls){
+        if(ball != balls.get(j)){
+          balls.get(j).checkCollision(ball);
+        }
+      }
+    }
+  //balls[0].checkCollision(balls[1]);
+  }
+  if(i==PULSAR) pulsar.draw();
+  if(i==SPIN) spin.draw();
+  if(i==CHESS_GRID) grid.draw();
+  if(i==PLAY_MOVIE) image(myMovie, 0, 0, width, height);;
+}
 // image2data converts an image to OctoWS2811's raw data format.
 // The number of vertical pixels in the image must be a multiple
 // of 8.  The data array must be the proper size for the image.
@@ -372,11 +433,11 @@ int colorWiring(int c) {
   return (green << 16) | (red << 8) | (blue); // GRB - most common wiring
 }
 
-int tintColor(int c) {
-  int b=256;
+int dimColor(int c, int bright) {
+  int b= bright;
   int red = int(((c & 0xFF0000) >> 16));
   int green = int(((c & 0x00FF00) >> 8));
-  int blue = int((c & 0x0000FF))+15;
+  int blue = int((c & 0x0000FF));
   red = (red * b) >> 8;
   green = (green * b) >> 8;
   blue = (blue * b) >> 8;
@@ -464,4 +525,9 @@ void onNewUser(SimpleOpenNI kinect, int userID) {
 
 void onLostUser(SimpleOpenNI curContext, int userId) {
         println("onLostUser - userId: " + userId);
+}
+void updateNoise() {
+  xoff = xoff + noiseInc;
+  if ( (frameCount % 2) == 0) yoff = yoff + 0.03;
+  if ( (frameCount % 3) == 0) zoff = zoff + 0.02;
 }
